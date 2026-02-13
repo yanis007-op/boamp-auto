@@ -10,17 +10,23 @@ ODSOFT_ENDPOINT = "https://boamp-datadila.opendatasoft.com/api/records/1.0/searc
 def fetch_boamp_open(rows: int = 1000, max_pages: int = 50):
     """
     Récupère les avis BOAMP encore ouverts (datelimitereponse >= aujourd'hui).
-    Pagination via start.
+    Pagination via start, avec garde-fou sur la limite ODS (start < 10000).
     """
-    today = datetime.now(timezone.utc).date().isoformat()  # ex: "2026-02-13"
+    today = datetime.now(timezone.utc).date().isoformat()
 
     all_records = []
     start = 0
 
-    # ODSQL: date limite >= aujourd'hui
     where = f"datelimitereponse >= date'{today}'"
 
+    # ODS v1: au-delà de start≈10000, ça peut renvoyer 400
+    ODS_MAX_START = 10000
+
     for _ in range(max_pages):
+        if start >= ODS_MAX_START:
+            print(f"⚠️ Stop pagination: reached ODS start limit ({ODS_MAX_START}).")
+            break
+
         params = {
             "dataset": "boamp",
             "rows": rows,
@@ -32,13 +38,19 @@ def fetch_boamp_open(rows: int = 1000, max_pages: int = 50):
         r = requests.get(ODSOFT_ENDPOINT, params=params, timeout=30)
         r.raise_for_status()
         data = r.json()
+
         records = data.get("records", [])
+        nhits = data.get("nhits")  # total matching records (si présent)
 
         if not records:
             break
 
         all_records.extend(records)
         start += rows
+
+        # Si nhits existe, on s’arrête quand on a tout
+        if isinstance(nhits, int) and start >= nhits:
+            break
 
     return all_records
 
